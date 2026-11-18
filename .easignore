@@ -1,0 +1,23 @@
+# exclude the backend entirely, it isn't needed for the app build
+server/
+
+# client
+client/node_modules/
+client/android/
+client/ios/
+client/.expo/
+client/dist/
+client/web-build/
+client/app-example/
+client/*.tsbuildinfo
+
+# generic
+**/node_modules/
+.git/
+.idea/
+.vscode/
+*.apk
+*.aab
+*.ipa
+*.zip
+*.log
