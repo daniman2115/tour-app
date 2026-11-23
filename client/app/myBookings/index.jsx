@@ -1,6 +1,6 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Image,
@@ -12,75 +12,10 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-/* ------------------------------------------------------------------ */
-/* Sample data: replace with your API response                         */
-/* status: "pending" | "confirmed" | "completed" | "canceled"          */
-/* ------------------------------------------------------------------ */
-const INITIAL_BOOKINGS = [
-  {
-    id: "b1",
-    name: "Kate Norman",
-    role: "Geologist",
-    location: "London, UK",
-    rating: 4.2,
-    reviews: 1872,
-    date: "2026-10-24T10:00:00",
-    status: "pending",
-  },
-  {
-    id: "b2",
-    name: "Daniel Mekonnen",
-    role: "Historian",
-    location: "Addis Ababa, ET",
-    rating: 4.8,
-    reviews: 640,
-    date: "2026-10-26T15:30:00",
-    status: "confirmed",
-  },
-  {
-    id: "b3",
-    name: "Sara Bekele",
-    role: "Nature Guide",
-    location: "Hawassa, ET",
-    rating: 4.6,
-    reviews: 312,
-    date: "2026-10-29T09:00:00",
-    status: "pending",
-  },
-  {
-    id: "b4",
-    name: "Liam Carter",
-    role: "Architect",
-    location: "Toronto, CA",
-    rating: 4.5,
-    reviews: 980,
-    date: "2026-10-12T11:00:00",
-    status: "completed",
-  },
-  {
-    id: "b5",
-    name: "Hana Tesfaye",
-    role: "Food Guide",
-    location: "Gondar, ET",
-    rating: 4.9,
-    reviews: 221,
-    date: "2026-10-05T17:00:00",
-    status: "completed",
-  },
-  {
-    id: "b6",
-    name: "Omar Haddad",
-    role: "Archaeologist",
-    location: "Cairo, EG",
-    rating: 4.3,
-    reviews: 455,
-    date: "2026-10-08T14:00:00",
-    status: "canceled",
-  },
-];
+import { fetchMyBookings, updateBookingStatus as apiUpdateStatus } from "../../services/apiService";
 
 const TABS = ["Upcoming", "Completed", "Canceled"];
 
@@ -339,25 +274,48 @@ const ConfirmSheet = ({ visible, action, booking, busy, onClose, onConfirm }) =>
 /* Screen                                                              */
 /* ------------------------------------------------------------------ */
 const Index = () => {
-  const [bookings, setBookings] = useState(INITIAL_BOOKINGS);
+  const [bookings, setBookings] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [selectedTab, setSelectedTab] = useState("Upcoming");
-  const [pending, setPending] = useState(null); // { action, id }
+  const [pending, setPending] = useState(null);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
 
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchMyBookings();
+      // Normalize: flatten guide name/image from populated fields
+      const normalized = data.map((b) => ({
+        ...b,
+        id: b._id,
+        date: b.scheduledAt,
+        name: b.guideId?.userId?.name ?? b.guideId?.name ?? "Guide",
+        role: b.guideId?.title ?? "Local Guide",
+        location: b.guideId?.location ?? "",
+        rating: b.guideId?.rating ?? 0,
+        reviews: b.guideId?.totalReviews ?? 0,
+        image: b.guideId?.userId?.profileImage ?? b.guideId?.profileImage ?? null,
+      }));
+      setBookings(normalized);
+    } catch (err) {
+      console.warn("Failed to fetch bookings:", err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
   const counts = useMemo(() => {
     const result = {};
-    TABS.forEach((t) => {
-      result[t] = bookings.filter(TAB_FILTER[t]).length;
-    });
+    TABS.forEach((t) => { result[t] = bookings.filter(TAB_FILTER[t]).length; });
     return result;
   }, [bookings]);
 
   const visible = useMemo(() => {
     const list = bookings.filter(TAB_FILTER[selectedTab]);
-    // Upcoming: soonest first. Completed / Canceled: most recent first.
     return list.sort((a, b) =>
       selectedTab === "Upcoming"
         ? new Date(a.date) - new Date(b.date)
@@ -374,25 +332,14 @@ const Index = () => {
   };
 
   const openAction = (action, booking) => setPending({ action, id: booking.id });
-  const closeAction = () => {
-    if (!busy) setPending(null);
-  };
-
-  /**
-   * Replace with your API call, e.g.
-   *   await api.patch(`/bookings/${id}`, { status });
-   */
-  const updateBookingStatus = async (id, status) => {
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    return { id, status };
-  };
+  const closeAction = () => { if (!busy) setPending(null); };
 
   const confirmAction = async () => {
     if (!pending) return;
     const a = ACTIONS[pending.action];
     setBusy(true);
     try {
-      await updateBookingStatus(pending.id, a.nextStatus);
+      await apiUpdateStatus(pending.id, a.nextStatus);
       setBookings((prev) =>
         prev.map((b) => (b.id === pending.id ? { ...b, status: a.nextStatus } : b))
       );
@@ -405,14 +352,21 @@ const Index = () => {
     }
   };
 
-  /** Replace with a real fetch, then setBookings(response) */
   const onRefresh = async () => {
     setRefreshing(true);
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await load();
     setRefreshing(false);
   };
 
   const empty = EMPTY_COPY[selectedTab];
+
+  if (loading) {
+    return (
+      <SafeAreaView className="items-center justify-center flex-1 bg-[#F7F9FC]">
+        <ActivityIndicator size="large" color="#22C55E" />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F9FC]" edges={["top"]}>

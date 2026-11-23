@@ -508,6 +508,7 @@ export const REVIEWS = [
 ];
 
 /* -------------------------------- getters ----------------------------- */
+// These now hit the real API. Use the service functions in components instead.
 export const getPlace = (id) => PLACES.find((p) => p.id === id) || null;
 export const getGuide = (id) => GUIDES.find((g) => g.id === id) || null;
 export const getGuidesForPlace = (placeId) =>
@@ -520,3 +521,20 @@ export const getReviewsForGuide = (guideId) =>
   REVIEWS.filter((r) => r.guideId === guideId).sort(
     (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
   );
+
+// Utility: convert a DB place (with createdAt) to match the UI shape
+export const normalizePlace = (p) => ({
+  ...p,
+  id: p._id ?? p.id,
+  addedDaysAgo: p.createdAt
+    ? Math.floor((Date.now() - new Date(p.createdAt).getTime()) / 86400000)
+    : 0,
+});
+
+// Utility: convert a DB guide (with populated userId) to match the UI shape
+export const normalizeGuide = (g) => ({
+  ...g,
+  id: g._id ?? g.id,
+  name: g.userId?.name ?? g.name ?? "Guide",
+  profileImage: g.userId?.profileImage ?? g.profileImage ?? null,
+});

@@ -1,7 +1,8 @@
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   RefreshControl,
   ScrollView,
   StatusBar,
@@ -10,73 +11,20 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import {
+  fetchNotifications,
+  markNotificationRead,
+  markAllNotificationsRead,
+  deleteNotification as apiDeleteNotification,
+} from "../../services/apiService";
 
-/* ------------------------------------------------------------------ */
-/* Notification types: icon, colors, and where tapping one goes        */
-/* ------------------------------------------------------------------ */
 const TYPES = {
-  request: { icon: "calendar-outline", color: "#477C19", bg: "bg-[#EAF8D9]", route: "/myBookings" },
-  confirmed: { icon: "checkmark-circle-outline", color: "#477C19", bg: "bg-[#EAF8D9]", route: "/myBookings" },
-  cancelled: { icon: "close-circle-outline", color: "#DC2626", bg: "bg-red-50", route: "/myBookings" },
-  rescheduled: { icon: "time-outline", color: "#4060B2", bg: "bg-[#EEF2FB]", route: "/myBookings" },
-  missed: { icon: "call-outline", color: "#9A6B00", bg: "bg-[#FFF4D6]", route: "/callLogs" },
+  appointment_request:   { icon: "calendar-outline",          color: "#477C19", bg: "bg-[#EAF8D9]",  route: "/myBookings" },
+  appointment_confirmed: { icon: "checkmark-circle-outline",  color: "#477C19", bg: "bg-[#EAF8D9]",  route: "/myBookings" },
+  appointment_cancelled: { icon: "close-circle-outline",      color: "#DC2626", bg: "bg-red-50",      route: "/myBookings" },
+  schedule_changed:      { icon: "time-outline",              color: "#4060B2", bg: "bg-[#EEF2FB]",   route: "/myBookings" },
+  payment:               { icon: "card-outline",              color: "#9A6B00", bg: "bg-[#FFF4D6]",   route: "/myBookings" },
 };
-
-/* ------------------------------------------------------------------ */
-/* Sample data: replace with your API response                         */
-/* ------------------------------------------------------------------ */
-const minutesAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
-
-const INITIAL_NOTIFICATIONS = [
-  {
-    id: "n1",
-    type: "request",
-    title: "Booking request",
-    body: "Kate Norman wants to book a video tour on Oct 24 at 10:00 AM.",
-    date: minutesAgo(45),
-    read: false,
-  },
-  {
-    id: "n2",
-    type: "missed",
-    title: "Missed call",
-    body: "You missed a call from Sara Bekele.",
-    date: minutesAgo(150),
-    read: false,
-  },
-  {
-    id: "n3",
-    type: "rescheduled",
-    title: "Schedule changed",
-    body: "Daniel Mekonnen moved your tour to Oct 27 at 3:30 PM.",
-    date: minutesAgo(480),
-    read: true,
-  },
-  {
-    id: "n4",
-    type: "cancelled",
-    title: "Booking canceled",
-    body: "Omar Haddad canceled the tour planned for Oct 20.",
-    date: minutesAgo(60 * 26),
-    read: true,
-  },
-  {
-    id: "n5",
-    type: "confirmed",
-    title: "Booking confirmed",
-    body: "Your tour with Liam Carter on Oct 22 is confirmed.",
-    date: minutesAgo(60 * 29),
-    read: true,
-  },
-  {
-    id: "n6",
-    type: "confirmed",
-    title: "Booking confirmed",
-    body: "Your tour with Hana Tesfaye on Oct 18 is confirmed.",
-    date: minutesAgo(60 * 24 * 4),
-    read: true,
-  },
-];
 
 const TABS = ["All", "Unread"];
 
@@ -160,12 +108,33 @@ const NotificationRow = ({ item, onPress, onLongPress }) => {
 /* Screen                                                              */
 /* ------------------------------------------------------------------ */
 const Index = () => {
-  const [items, setItems] = useState(INITIAL_NOTIFICATIONS);
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("All");
   const [refreshing, setRefreshing] = useState(false);
-  const [toast, setToast] = useState(null); // { message, undo? }
+  const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
   const lastRemoved = useRef(null);
+
+  const normalize = (n) => ({
+    ...n,
+    id: n._id ?? n.id,
+    date: n.createdAt ?? n.date,
+    read: n.isRead ?? n.read ?? false,
+  });
+
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchNotifications();
+      setItems(data.map(normalize));
+    } catch (err) {
+      console.warn("Failed to fetch notifications:", err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const unreadCount = useMemo(() => items.filter((n) => !n.read).length, [items]);
 
@@ -180,17 +149,16 @@ const Index = () => {
     toastTimer.current = setTimeout(() => setToast(null), 4000);
   };
 
-  /* ------------------------------ actions ------------------------------ */
   const markRead = (id) => {
     setItems((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
-    // TODO: tell your API this notification was read
+    markNotificationRead(id).catch(() => {});
   };
 
   const markAllRead = () => {
     if (unreadCount === 0) return;
     setItems((prev) => prev.map((n) => ({ ...n, read: true })));
     showToast("All notifications marked as read");
-    // TODO: tell your API
+    markAllNotificationsRead().catch(() => {});
   };
 
   const open = (item) => {
@@ -204,7 +172,7 @@ const Index = () => {
     lastRemoved.current = { item, index };
     setItems((prev) => prev.filter((n) => n.id !== item.id));
     showToast("Notification deleted", undo);
-    // TODO: send the delete to your API once the undo window passes
+    apiDeleteNotification(item.id).catch(() => {});
   };
 
   const undo = () => {
@@ -221,7 +189,7 @@ const Index = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await new Promise((resolve) => setTimeout(resolve, 700)); // fetch notifications here
+    await load();
     setRefreshing(false);
   };
 

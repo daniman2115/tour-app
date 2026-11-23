@@ -1,21 +1,22 @@
 // app/guide/[id].jsx   ->  route: /guide/g1
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { Stack, router, useLocalSearchParams } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Image, ScrollView, StatusBar, Text, TouchableOpacity, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   DAY_ORDER,
   WEEKDAYS,
   formatTime12,
-  getGuide,
-  getPlacesForGuide,
-  getReviewsForGuide,
   guideImageOf,
   imageOf,
   money,
+  normalizeGuide,
+  normalizePlace,
   timeAgo,
 } from "../../data/mockData";
+import { fetchGuideById, fetchGuideReviews } from "../../services/apiService";
+import { fetchPlaces } from "../../services/placeService";
 
 const Stars = ({ rating, size = 14 }) => (
   <View className="flex-row">
@@ -54,9 +55,57 @@ const Chip = ({ label }) => (
 export default function GuideDetails() {
   const { id } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-  const guide = getGuide(id);
-  const reviews = useMemo(() => getReviewsForGuide(id), [id]);
+  const [guide, setGuide] = useState(null);
+  const [reviews, setReviews] = useState([]);
+  const [places, setPlaces] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [showAllReviews, setShowAllReviews] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const [rawGuide, rawReviews, rawPlaces] = await Promise.all([
+          fetchGuideById(id),
+          fetchGuideReviews(id),
+          fetchPlaces(),
+        ]);
+        if (mounted) {
+          const ng = normalizeGuide(rawGuide);
+          setGuide(ng);
+          setReviews((rawReviews || []).map((r) => ({ ...r, id: r._id, visitorName: r.visitorId?.name || r.visitorName || "Visitor" })));
+          // Show places in the same country as the guide's location
+          const country = (ng.location || "").split(",").pop()?.trim().toLowerCase();
+          const filtered = (rawPlaces || [])
+            .map(normalizePlace)
+            .filter((p) => !country || (p.country || "").toLowerCase() === country);
+          setPlaces(filtered.length ? filtered : (rawPlaces || []).map(normalizePlace).slice(0, 4));
+        }
+      } catch (err) {
+        console.warn("Failed to fetch guide:", err.message);
+        if (mounted) {
+          setGuide(null);
+          setReviews([]);
+          setPlaces([]);
+        }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <View className="items-center justify-center flex-1 bg-[#F7F9FC]">
+        <Stack.Screen options={{ headerShown: false }} />
+        <Text className="mt-4 text-lg font-bold text-[#172B4D]">Loading…</Text>
+      </View>
+    );
+  }
 
   if (!guide) {
     return (
@@ -74,7 +123,6 @@ export default function GuideDetails() {
     );
   }
 
-  const places = getPlacesForGuide(guide);
   const today = WEEKDAYS[new Date().getDay()];
   const availabilityByDay = Object.fromEntries(guide.availability.map((s) => [s.day, s]));
   const visibleReviews = showAllReviews ? reviews : reviews.slice(0, 2);

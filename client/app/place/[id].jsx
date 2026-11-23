@@ -1,24 +1,26 @@
 // app/place/[id].jsx   ->  route: /place/p1
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { Stack, router, useLocalSearchParams } from "expo-router";
-import { useMemo, useRef, useState } from "react";
-import { Image, ScrollView, StatusBar, Text, TouchableOpacity, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, Image, ScrollView, StatusBar, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { toggleFavorite, useFavorites } from "../../data/favoritesStore";
 import {
-  getGuidesForPlace,
-  getPlace,
   guideImageOf,
   imageOf,
   money,
+  normalizeGuide,
+  normalizePlace,
 } from "../../data/mockData";
+import { fetchGuidesForPlace, fetchPlaceById } from "../../services/placeService";
 
 export default function PlaceDetails() {
   const { id } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
   const favorites = useFavorites();
-  const place = getPlace(id);
-  const guides = useMemo(() => getGuidesForPlace(id), [id]);
+  const [place, setPlace] = useState(null);
+  const [guides, setGuides] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
@@ -28,6 +30,40 @@ export default function PlaceDetails() {
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 2000);
   };
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const [rawPlace, rawGuides] = await Promise.all([
+          fetchPlaceById(id),
+          fetchGuidesForPlace(id),
+        ]);
+        if (mounted) {
+          setPlace(normalizePlace(rawPlace));
+          setGuides((rawGuides || []).map(normalizeGuide));
+        }
+      } catch (err) {
+        console.warn("Failed to fetch place:", err.message);
+        if (mounted) { setPlace(null); setGuides([]); }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <View className="items-center justify-center flex-1 bg-[#F7F9FC]">
+        <Stack.Screen options={{ headerShown: false }} />
+        <ActivityIndicator size="large" color="#22C55E" />
+      </View>
+    );
+  }
+
+
 
   if (!place) {
     return (

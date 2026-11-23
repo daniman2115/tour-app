@@ -1,7 +1,7 @@
 // app/bookTour.jsx   ->  route: /bookTour?guideId=g1&placeId=p3
 import { Ionicons, MaterialIcons } from "@expo/vector-icons";
 import { Stack, router, useLocalSearchParams } from "expo-router";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -16,15 +16,16 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
-import { useSelector } from "react-redux";
 import {
   WEEKDAYS,
   formatTime12,
-  getGuide,
-  getPlace,
   guideImageOf,
   money,
+  normalizeGuide,
+  normalizePlace,
 } from "../../data/mockData";
+import { createBooking, fetchGuideById } from "../../services/apiService";
+import { fetchPlaceById } from "../../services/placeService";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DURATIONS = [30, 60, 90, 120]; // minutes (Booking.duration)
@@ -58,9 +59,34 @@ const Card = ({ title, children }) => (
 export default function BookTour() {
   const { guideId, placeId } = useLocalSearchParams();
   const insets = useSafeAreaInsets();
-  const user = useSelector((state) => state.auth.user);
-  const guide = getGuide(guideId);
-  const place = placeId ? getPlace(placeId) : null;
+  const [guide, setGuide] = useState(null);
+  const [place, setPlace] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const rawGuide = await fetchGuideById(guideId);
+        if (mounted) setGuide(normalizeGuide(rawGuide));
+        if (placeId) {
+          try {
+            const rawPlace = await fetchPlaceById(placeId);
+            if (mounted) setPlace(normalizePlace(rawPlace));
+          } catch (_) {}
+        }
+      } catch (err) {
+        console.warn("Failed to fetch guide:", err.message);
+        if (mounted) setGuide(null);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [guideId, placeId]);
 
   /* Next 14 days, each flagged available if the guide works that weekday */
   const availabilityByDay = useMemo(
@@ -105,6 +131,15 @@ export default function BookTour() {
     return result;
   }, [guide, dates, dateIndex, duration, availabilityByDay]);
 
+  if (loading) {
+    return (
+      <SafeAreaView className="items-center justify-center flex-1 bg-[#F7F9FC]" edges={["top"]}>
+        <Stack.Screen options={{ headerShown: false }} />
+        <ActivityIndicator size="large" color="#22C55E" />
+      </SafeAreaView>
+    );
+  }
+
   if (!guide) {
     return (
       <View className="items-center justify-center flex-1 px-10 bg-[#F7F9FC]">
@@ -142,36 +177,17 @@ export default function BookTour() {
     const scheduledAt = new Date(chosenDate);
     scheduledAt.setHours(h, m, 0, 0);
 
-    const visitorId = user?._id ?? user?.id;
-
-    // Shapes match your Booking and Transaction models.
-    const booking = {
-      visitorId,
-      guideId: guide.id,
-      scheduledAt: scheduledAt.toISOString(),
-      duration,
-      status: "pending",
-      price,
-      paymentStatus: "paid",
-      notes: notes.trim(),
-    };
-    const transaction = {
-      payerId: visitorId,
-      payeeId: guide.userId,
-      amount: price,
-      method,
-      status: "completed",
-    };
-
     setSubmitting(true);
     try {
-      // TODO: replace with your API call, e.g.
-      //   const res = await api.post("/bookings", { booking, transaction });
-      // The server should create the Booking + Transaction and set streamCallId.
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      setConfirmation({ booking, transaction, scheduledAt });
+      const booking = await createBooking({
+        guideId: guide.id,
+        scheduledAt: scheduledAt.toISOString(),
+        duration,
+        notes: notes.trim(),
+      });
+      setConfirmation({ booking, transaction: { method }, scheduledAt });
     } catch (e) {
-      Alert.alert("Couldn't complete your booking", "Please try again.");
+      Alert.alert("Couldn't complete your booking", e?.response?.data?.message || "Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -194,7 +210,7 @@ export default function BookTour() {
               Booking requested
             </Text>
             <Text className="mt-2 text-base leading-6 text-center text-gray-500">
-              {guide.name.split(" ")[0]} will confirm your tour soon. You'll get a notification.
+              {guide.name.split(" ")[0]} will confirm your tour soon. You&apos;ll get a notification.
             </Text>
           </View>
 

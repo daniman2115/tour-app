@@ -1,6 +1,6 @@
 import { Ionicons, MaterialCommunityIcons, MaterialIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Linking,
@@ -12,31 +12,10 @@ import {
   Text,
   TouchableOpacity,
   View,
+  ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-/* ------------------------------------------------------------------ */
-/* Sample data: replace with your API response                         */
-/* type: "outgoing" | "incoming" | "missed"                            */
-/* duration is in seconds; an outgoing call with 0 = not answered      */
-/* ------------------------------------------------------------------ */
-const at = (daysAgo, hour, minute = 0) => {
-  const d = new Date();
-  d.setDate(d.getDate() - daysAgo);
-  d.setHours(hour, minute, 0, 0);
-  return d.toISOString();
-};
-
-const INITIAL_CALLS = [
-  { id: "c1", name: "Kate Norman", phone: "+44 7700 900123", type: "outgoing", duration: 60, date: at(0, 12, 30), followUp: true, recording: true },
-  { id: "c2", name: "Daniel Mekonnen", phone: "+251 91 123 4567", type: "incoming", duration: 840, date: at(0, 9, 5), followUp: false, recording: true },
-  { id: "c3", name: "Sara Bekele", phone: "+251 92 765 4321", type: "missed", duration: 0, date: at(1, 18, 45), followUp: false, recording: false },
-  { id: "c4", name: "Hardik Pandya", phone: "+91 76225 6445", type: "outgoing", duration: 0, date: at(1, 12, 30), followUp: false, recording: false },
-  { id: "c5", name: "Liam Carter", phone: "+1 416 555 0182", type: "outgoing", duration: 1325, date: at(1, 10, 0), followUp: true, recording: true },
-  { id: "c6", name: "Hana Tesfaye", phone: "+251 93 222 8899", type: "incoming", duration: 310, date: at(3, 16, 20), followUp: false, recording: false },
-  { id: "c7", name: "Omar Haddad", phone: "+20 100 555 0147", type: "missed", duration: 0, date: at(4, 8, 15), followUp: false, recording: false },
-  { id: "c8", name: "Kate Norman", phone: "+44 7700 900123", type: "outgoing", duration: 95, date: at(6, 14, 10), followUp: false, recording: true },
-];
+import { fetchCallLogs, deleteCallLog as apiDeleteCallLog } from "../../services/apiService";
 
 const TABS = ["Call Logs", "Recordings"];
 const FILTERS = ["All", "Incoming", "Outgoing", "Missed"];
@@ -321,16 +300,39 @@ const Dialpad = ({ visible, onClose, onCall }) => {
 /* Screen                                                              */
 /* ------------------------------------------------------------------ */
 const Index = () => {
-  const [calls, setCalls] = useState(INITIAL_CALLS);
+  const [calls, setCalls] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("Call Logs");
   const [filter, setFilter] = useState("All");
   const [expandedId, setExpandedId] = useState(null);
   const [playingId, setPlayingId] = useState(null);
   const [dialOpen, setDialOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [toast, setToast] = useState(null); // { message, undo? }
+  const [toast, setToast] = useState(null);
   const toastTimer = useRef(null);
   const lastRemoved = useRef(null);
+
+  const normalize = (c) => ({
+    ...c,
+    id: c._id ?? c.id,
+    date: c.startedAt ?? c.date,
+    recording: !!c.recordingUrl,
+    followUp: c.followUp ?? false,
+    phone: "",
+  });
+
+  const load = useCallback(async () => {
+    try {
+      const data = await fetchCallLogs();
+      setCalls(data.map(normalize));
+    } catch (err) {
+      console.warn("Failed to fetch call logs:", err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
 
   const showToast = (message, undo) => {
     setToast({ message, undo });
@@ -340,9 +342,7 @@ const Index = () => {
 
   const filterCounts = useMemo(() => {
     const result = {};
-    FILTERS.forEach((f) => {
-      result[f] = calls.filter(FILTER_FN[f]).length;
-    });
+    FILTERS.forEach((f) => { result[f] = calls.filter(FILTER_FN[f]).length; });
     return result;
   }, [calls]);
 
@@ -356,10 +356,8 @@ const Index = () => {
     [calls]
   );
 
-  /* ------------------------------ actions ------------------------------ */
   const toggleFollowUp = (id) => {
     setCalls((prev) => prev.map((c) => (c.id === id ? { ...c, followUp: !c.followUp } : c)));
-    // TODO: persist with your API
   };
 
   const deleteCall = (call) => {
@@ -369,7 +367,7 @@ const Index = () => {
     setExpandedId(null);
     if (playingId === call.id) setPlayingId(null);
     showToast("Call deleted", undoDelete);
-    // TODO: send the delete to your API once the undo window passes
+    apiDeleteCallLog(call.id).catch(() => {});
   };
 
   const undoDelete = () => {
@@ -404,7 +402,7 @@ const Index = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await new Promise((resolve) => setTimeout(resolve, 700)); // fetch your calls here
+    await load();
     setRefreshing(false);
   };
 

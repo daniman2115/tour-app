@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   Image,
@@ -18,7 +18,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useSelector } from "react-redux";
 import GuideCard from "../../../components/GuideCard";
 import { toggleFavorite, useFavorites } from "../../../data/favoritesStore";
-import { GUIDES, PLACES, imageOf, money } from "../../../data/mockData";
+import { imageOf, money, normalizePlace, normalizeGuide } from "../../../data/mockData";
+import { fetchPlaces, fetchTopGuides } from "../../../services/placeService";
 
 const HERO_IMAGE = require("../../../assets/images/homebg.png");
 const HERO_SHADOW = require("../../../assets/images/homeshadow.png");
@@ -211,10 +212,11 @@ const FilterSheet = ({ visible, draft, setDraft, onApply, onReset, onClose }) =>
 const Index = () => {
   const { user } = useSelector((state) => state.auth);
   const insets = useSafeAreaInsets();
-  const unreadNotifications = user?.unreadNotifications ?? 0; // wire to your notifications state
+  const unreadNotifications = user?.unreadNotifications ?? 0;
   const favorites = useFavorites();
 
-  const [places, setPlaces] = useState(PLACES);
+  const [places, setPlaces] = useState([]);
+  const [guides, setGuides] = useState([]);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("All");
   const [tab, setTab] = useState("Popular");
@@ -224,6 +226,28 @@ const Index = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [toast, setToast] = useState("");
   const toastTimer = useRef(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [rawPlaces, rawGuides] = await Promise.all([
+        fetchPlaces(),
+        fetchTopGuides(),
+      ]);
+      setPlaces(rawPlaces.map(normalizePlace));
+      setGuides(rawGuides.map(normalizeGuide));
+    } catch (err) {
+      console.warn("Failed to fetch home data:", err.message);
+      setPlaces([]);
+      setGuides([]);
+
+    } finally {
+    }
+  }, []);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadData();
+  }, [loadData]);
 
   const activeFilterCount =
     (filters.maxPrice !== null ? 1 : 0) + (filters.duration !== "Any" ? 1 : 0);
@@ -265,18 +289,18 @@ const Index = () => {
   );
 
   /* Guides respond to search, and are hidden when a place category is chosen */
-  const guides = useMemo(() => {
+  const filteredGuides = useMemo(() => {
     if (category !== "All") return [];
     const q = query.trim().toLowerCase();
-    return GUIDES.filter(
+    return guides.filter(
       (g) =>
         g.isActive &&
         (!q ||
-          `${g.name} ${g.location} ${g.languages.join(" ")} ${g.areasOfExpertise.join(" ")}`
+          `${g.name} ${g.location} ${(g.languages || []).join(" ")} ${(g.areasOfExpertise || []).join(" ")}`
             .toLowerCase()
             .includes(q))
-    ).sort((a, b) => b.rating - a.rating);
-  }, [category, query]);
+    );
+  }, [guides, category, query]);
 
   const featured = places.find((p) => p.featured) || places[0];
   const showFeatured = !hasAnyFilter && featured;
@@ -307,8 +331,7 @@ const Index = () => {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await new Promise((resolve) => setTimeout(resolve, 700)); // fetch places, then setPlaces(response)
-    setPlaces(PLACES);
+    await loadData();
     setRefreshing(false);
   };
 
@@ -392,7 +415,7 @@ const Index = () => {
             <View className="flex-row items-center px-3 py-1.5 rounded-full bg-white/20">
               <Ionicons name="people-outline" size={14} color="white" />
               <Text className="ml-1.5 text-xs font-semibold text-white">
-                {GUIDES.length} local guides
+                {guides.length} local guides
               </Text>
             </View>
           </View>
@@ -587,12 +610,12 @@ const Index = () => {
         )}
 
         {/* Top guides */}
-        {guides.length > 0 && (
+        {filteredGuides.length > 0 && (
           <>
             <SectionTitle title="Top Guides" subtitle="Verified locals, ready for a live tour" />
             <FlatList
               horizontal
-              data={guides}
+              data={filteredGuides}
               keyExtractor={(item) => item.id}
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={{ paddingHorizontal: 20 }}
